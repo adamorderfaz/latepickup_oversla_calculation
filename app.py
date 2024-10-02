@@ -83,6 +83,22 @@ def process_data(df):
     # Apply the function to determine late or non-late pickup
     selected_data['Late Pickup'] = selected_data.apply(determine_late_pickup, axis=1)
 
+    # Calculate 'Tanggal Max' as 'Dispatch at' + 'max SLA' (in days)
+    selected_data['Tanggal Max'] = selected_data['Dispatch at'] + pd.to_timedelta(selected_data['max SLA'], unit='days')
+
+    # Calculate 'Over SLA' as the difference between 'Tanggal Max' and 'Delivered at 2' (in days)
+    selected_data['Over SLA'] = (selected_data['Tanggal Max'] - selected_data['Delivered at 2']).dt.days
+    selected_data['Over SLA'] = selected_data['Over SLA'].astype(int, errors='ignore')
+
+    # Get the current date as 'Today'
+    today_date = pd.to_datetime('today').normalize()
+
+    # Add the 'Today' column to the dataframe
+    selected_data['Today'] = today_date
+
+    # Calculate 'Over SLA IP'
+    selected_data['Over SLA IP'] = (selected_data['Today'] - selected_data['Tanggal Max']).dt.days
+
     return selected_data
 
 
