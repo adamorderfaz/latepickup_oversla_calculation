@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from datetime import timedelta
+from PIL import Image
 
 # List of required columns
 required_columns = ['No', 'Order ID', 'Shipment ID', 'Tracking ID', 'Courier',
@@ -101,6 +102,11 @@ def process_data(df):
 
     return selected_data
 
+# Load images as icon
+icon_image = Image.open("orderfaz.jpeg")
+
+# Page Config
+st.set_page_config(page_title="Orderfaz - Late Pickup & SLA Calculation", page_icon=icon_image, layout="centered")
 
 # Streamlit UI
 st.title("Shipment Data Processor")
