@@ -11,12 +11,14 @@ required_columns = [
     'min SLA', 'max SLA', 'Delivered at'
 ]
 
+
 # Function to validate if all required columns are present
 def validate_columns(df):
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         return False, missing_columns
     return True, None
+
 
 # Function to determine if the pickup was late or not, and how many days late
 def determine_late_pickup(row):
@@ -49,6 +51,7 @@ def determine_late_pickup(row):
 
     return 'Non-Late Pickup', 0
 
+
 # Function to process the uploaded file
 def process_data(df):
     # Validate columns
@@ -76,7 +79,8 @@ def process_data(df):
 
     # Report missing or invalid datetime values, but do not remove them
     if selected_data[['Created at', 'Dispatch at', 'Pickup Date', 'Delivered at']].isnull().any().any():
-        st.warning("Beberapa baris data pada kolom Dispatch at / Delivered at kosong, jadi perhitungan diabaikan dan diberikan penanda 'Dispatch at Kosong' atau 'Delivered at Kosong'")
+        st.warning(
+            "Beberapa baris data pada kolom Dispatch at / Delivered at kosong, jadi perhitungan diabaikan dan diberikan penanda 'Dispatch at Kosong' atau 'Delivered at Kosong'")
 
     # Apply the function to determine late or non-late pickup and 'Days Late'
     selected_data[['Late Pickup', 'Days Late']] = selected_data.apply(lambda row: determine_late_pickup(row), axis=1,
@@ -92,7 +96,8 @@ def process_data(df):
     # Calculate 'Over SLA' as the difference between 'Tanggal Max' and 'Delivered at', or mark 'Dispatch at Kosong' or 'Delivered at Kosong'
     selected_data['Over SLA'] = selected_data.apply(
         lambda row: (row['Tanggal Max'] - row['Delivered at']).days
-        if pd.notnull(row['Tanggal Max']) and pd.notnull(row['Delivered at']) and row['Tanggal Max'] != 'Dispatch at Kosong'
+        if pd.notnull(row['Tanggal Max']) and pd.notnull(row['Delivered at']) and row[
+            'Tanggal Max'] != 'Dispatch at Kosong'
         else 'Delivered at Kosong' if pd.isnull(row['Delivered at']) else 'Dispatch at Kosong', axis=1
     )
 
@@ -110,6 +115,11 @@ def process_data(df):
         else 'Delivered at Kosong' if pd.isnull(row['Delivered at']) else 'Dispatch at Kosong', axis=1
     )
 
+    # Format the datetime columns to the desired format 'DD-MM-YYYY hh:mm:ss'
+    datetime_columns = ['Created at', 'Dispatch at', 'Pickup Date', 'Delivered at', 'Tanggal Max', 'Today']
+    for col in datetime_columns:
+        selected_data[col] = pd.to_datetime(selected_data[col], errors='coerce').dt.strftime('%d-%m-%Y %H:%M:%S')
+
     # Rearrange columns based on the required order
     required_columns_order = [
         'No', 'Order ID', 'Shipment ID', 'Tracking ID', 'Courier', 'Courier Service',
@@ -123,6 +133,28 @@ def process_data(df):
     selected_data = selected_data[cols_in_order]
 
     return selected_data
+
+
+# Function to convert dataframe to Excel and treat specific columns as text (to avoid scientific notation)
+def to_excel(df):
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine='xlsxwriter')
+
+    # Ensure columns like 'Tracking ID' are treated as text to avoid scientific notation
+    df['Tracking ID'] = df['Tracking ID'].astype(str)  # Convert Tracking ID to string
+
+    df.to_excel(writer, index=False, sheet_name='Processed Data')
+
+    workbook = writer.book
+    worksheet = writer.sheets['Processed Data']
+
+    # Set format for 'Tracking ID' to ensure it remains text and doesn't appear in scientific notation
+    text_format = workbook.add_format({'num_format': '@'})  # '@' means text format
+    worksheet.set_column('D:D', None, text_format)  # Assuming 'Tracking ID' is in column D (adjust if necessary)
+
+    writer.close()
+    processed_data = output.getvalue()
+    return processed_data
 
 
 # Load images as icon
@@ -156,17 +188,6 @@ if uploaded_file:
             # Display the processed dataframe
             st.write("Processed Data:")
             st.dataframe(processed_df)
-
-
-            # Function to convert dataframe to Excel
-            def to_excel(df):
-                output = BytesIO()
-                writer = pd.ExcelWriter(output, engine='xlsxwriter')
-                df.to_excel(writer, index=False, sheet_name='Processed Data')
-                writer.close()
-                processed_data = output.getvalue()
-                return processed_data
-
 
             # Download button for processed data
             processed_excel = to_excel(processed_df)
