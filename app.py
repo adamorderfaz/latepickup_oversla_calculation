@@ -4,12 +4,12 @@ from io import BytesIO
 from datetime import timedelta
 from PIL import Image
 
-# List of required columns
-required_columns = ['No', 'Order ID', 'Shipment ID', 'Tracking ID', 'Courier',
-                    'Courier Service', 'Shipment Type', 'Tracking Status',
-                    'Created at', 'Dispatch at', 'Pickup Date',
-                    'min SLA', 'max SLA', 'Delivered at 2']
-
+# List of required columns in the desired order
+required_columns = [
+    'No', 'Order ID', 'Shipment ID', 'Tracking ID', 'Courier', 'Courier Service',
+    'Shipment Type', 'Tracking Status', 'Created at', 'Dispatch at', 'Pickup Date',
+    'min SLA', 'max SLA', 'Delivered at'
+]
 
 # Function to validate if all required columns are present
 def validate_columns(df):
@@ -18,6 +18,36 @@ def validate_columns(df):
         return False, missing_columns
     return True, None
 
+# Function to determine if the pickup was late or not, and how many days late
+def determine_late_pickup(row):
+    if pd.isnull(row['Dispatch at']):
+        return 'Dispatch at Kosong', 'Dispatch at Kosong'
+
+    if pd.isnull(row['Pickup Date']):
+        return 'Non-Late Pickup', 0
+
+    request_time = row['Pickup Date'].time()  # The time user requested pickup
+    actual_pickup_datetime = row['Dispatch at']  # The datetime when courier picked up the package
+    request_datetime = row['Pickup Date']  # The datetime when user requested the pickup
+
+    # Calculate the time difference between pickup request and actual dispatch
+    time_difference = actual_pickup_datetime - request_datetime
+
+    # If the time difference exceeds 24 hours, mark as Late Pickup and return the number of days late
+    if time_difference > pd.Timedelta(days=1):
+        return 'Late Pickup', time_difference.days
+
+    # Apply the original late pickup logic
+    if request_time >= pd.to_datetime("15:00:00").time() and actual_pickup_datetime.date() > request_datetime.date():
+        return 'Non-Late Pickup', 0
+
+    if request_time < pd.to_datetime("15:00:00").time() and actual_pickup_datetime.date() == request_datetime.date():
+        return 'Non-Late Pickup', 0
+
+    if request_time < pd.to_datetime("15:00:00").time() and actual_pickup_datetime.date() > request_datetime.date():
+        return 'Late Pickup', 1
+
+    return 'Non-Late Pickup', 0
 
 # Function to process the uploaded file
 def process_data(df):
@@ -27,8 +57,8 @@ def process_data(df):
         st.error(f"The following columns are missing: {', '.join(missing_columns)}")
         return None
 
-    # Select specific columns
-    selected_data = df[required_columns]
+    # Select all columns (no subset), as requested by user
+    selected_data = df.copy()
 
     # Try to convert the columns to datetime and handle errors
     try:
@@ -38,69 +68,62 @@ def process_data(df):
                                                       errors='coerce')
         selected_data['Pickup Date'] = pd.to_datetime(selected_data['Pickup Date'], format='%d %b %y %H:%M',
                                                       errors='coerce')
-        selected_data['Delivered at 2'] = pd.to_datetime(selected_data['Delivered at 2'], format='%d %b %y',
-                                                         errors='coerce')
+        selected_data['Delivered at'] = pd.to_datetime(selected_data['Delivered at'], format='%d %b %y',
+                                                       errors='coerce')
     except Exception as e:
         st.error(f"Error in datetime conversion: {str(e)}")
         return None
 
-    # Validate if there are any NaN values in date columns
-    if selected_data[['Created at', 'Dispatch at', 'Pickup Date']].isnull().any().any():
-        st.error("Some datetime columns contain invalid or missing values.")
-        return None
+    # Report missing or invalid datetime values, but do not remove them
+    if selected_data[['Created at', 'Dispatch at', 'Pickup Date', 'Delivered at']].isnull().any().any():
+        st.warning("Beberapa baris data pada kolom Dispatch at / Delivered at kosong, jadi perhitungan diabaikan dan diberikan penanda 'Dispatch at Kosong' atau 'Delivered at Kosong'")
 
-    # Now proceed with the rest of the logic if data is valid
-    # Define the cutoff time for the day
-    cutoff_time = pd.to_datetime("15:00:00").time()
+    # Apply the function to determine late or non-late pickup and 'Days Late'
+    selected_data[['Late Pickup', 'Days Late']] = selected_data.apply(lambda row: determine_late_pickup(row), axis=1,
+                                                                      result_type='expand')
 
-    # Function to determine if the pickup was late or not
-    def determine_late_pickup(row):
-        if pd.isnull(row['Dispatch at']) or pd.isnull(row['Pickup Date']):
-            return 'Non-Late Pickup'
+    # Calculate 'Tanggal Max' as 'Dispatch at' + 'max SLA' (in days), or mark 'Dispatch at Kosong'
+    selected_data['Tanggal Max'] = selected_data.apply(
+        lambda row: row['Dispatch at'] + pd.to_timedelta(row['max SLA'], unit='days')
+        if pd.notnull(row['Dispatch at'])
+        else 'Dispatch at Kosong', axis=1
+    )
 
-        request_time = row['Pickup Date'].time()  # The time user requested pickup
-        actual_pickup_datetime = row['Dispatch at']  # The datetime when courier picked up the package
-        request_datetime = row['Pickup Date']  # The datetime when user requested the pickup
-
-        # Calculate the time difference between pickup request and actual dispatch
-        time_difference = actual_pickup_datetime - request_datetime
-
-        # If the time difference exceeds 24 hours, mark as Late Pickup
-        if time_difference > pd.Timedelta(days=1):
-            return 'Late Pickup'
-
-        # Apply the original late pickup logic
-        if request_time >= cutoff_time and actual_pickup_datetime.date() > request_datetime.date():
-            return 'Non-Late Pickup'
-
-        if request_time < cutoff_time and actual_pickup_datetime.date() == request_datetime.date():
-            return 'Non-Late Pickup'
-
-        if request_time < cutoff_time and actual_pickup_datetime.date() > request_datetime.date():
-            return 'Late Pickup'
-
-        return 'Non-Late Pickup'
-
-    # Apply the function to determine late or non-late pickup
-    selected_data['Late Pickup'] = selected_data.apply(determine_late_pickup, axis=1)
-
-    # Calculate 'Tanggal Max' as 'Dispatch at' + 'max SLA' (in days)
-    selected_data['Tanggal Max'] = selected_data['Dispatch at'] + pd.to_timedelta(selected_data['max SLA'], unit='days')
-
-    # Calculate 'Over SLA' as the difference between 'Tanggal Max' and 'Delivered at 2' (in days)
-    selected_data['Over SLA'] = (selected_data['Tanggal Max'] - selected_data['Delivered at 2']).dt.days
-    selected_data['Over SLA'] = selected_data['Over SLA'].astype(int, errors='ignore')
+    # Calculate 'Over SLA' as the difference between 'Tanggal Max' and 'Delivered at', or mark 'Dispatch at Kosong' or 'Delivered at Kosong'
+    selected_data['Over SLA'] = selected_data.apply(
+        lambda row: (row['Tanggal Max'] - row['Delivered at']).days
+        if pd.notnull(row['Tanggal Max']) and pd.notnull(row['Delivered at']) and row['Tanggal Max'] != 'Dispatch at Kosong'
+        else 'Delivered at Kosong' if pd.isnull(row['Delivered at']) else 'Dispatch at Kosong', axis=1
+    )
 
     # Get the current date as 'Today'
     today_date = pd.to_datetime('today').normalize()
-
-    # Add the 'Today' column to the dataframe
     selected_data['Today'] = today_date
 
-    # Calculate 'Over SLA IP'
-    selected_data['Over SLA IP'] = (selected_data['Today'] - selected_data['Tanggal Max']).dt.days
+    # Calculate 'Over SLA IP' only for statuses that are not 'Delivered', 'Returned', or 'Waiting for Pickup'
+    conditions = ~selected_data['Tracking Status'].isin(['Delivered', 'Returned', 'Waiting for Pickup'])
+
+    # Calculate 'Over SLA IP' or mark 'Dispatch at Kosong' or 'Delivered at Kosong'
+    selected_data['Over SLA IP'] = selected_data.apply(
+        lambda row: (row['Today'] - row['Tanggal Max']).days
+        if pd.notnull(row['Tanggal Max']) and row['Tanggal Max'] != 'Dispatch at Kosong' and conditions[row.name]
+        else 'Delivered at Kosong' if pd.isnull(row['Delivered at']) else 'Dispatch at Kosong', axis=1
+    )
+
+    # Rearrange columns based on the required order
+    required_columns_order = [
+        'No', 'Order ID', 'Shipment ID', 'Tracking ID', 'Courier', 'Courier Service',
+        'Shipment Type', 'Tracking Status', 'Created at', 'Dispatch at', 'Pickup Date',
+        'min SLA', 'max SLA', 'Delivered at', 'Late Pickup', 'Days Late',
+        'Tanggal Max', 'Over SLA', 'Today', 'Over SLA IP'
+    ]
+    # Add remaining columns that were not specified in the required order
+    remaining_columns = [col for col in selected_data.columns if col not in required_columns_order]
+    cols_in_order = required_columns_order + remaining_columns
+    selected_data = selected_data[cols_in_order]
 
     return selected_data
+
 
 # Load images as icon
 icon_image = Image.open("orderfaz.jpeg")
@@ -109,11 +132,10 @@ icon_image = Image.open("orderfaz.jpeg")
 st.set_page_config(page_title="Orderfaz - Late Pickup & SLA Calculation", page_icon=icon_image, layout="centered")
 
 # Streamlit UI
-st.title("Shipment Data Processor")
+st.title("Orderfaz - Late Pickup & Over SLA Calculation")
 
 # Note
 st.success('CATATAN : Pastikan untuk input data sesuai dengan format yang sesuai, jangan ada perubahan')
-# st.dataframe(pd.read_excel('dummy-data-latepickup-sla.xlsx').head(5))
 
 # File uploader
 uploaded_file = st.file_uploader("Upload your Excel file", type="xlsx")
