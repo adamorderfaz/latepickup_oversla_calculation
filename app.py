@@ -129,7 +129,7 @@ def process_data(df):
 icon_image = Image.open("orderfaz.jpeg")
 
 # Page Config
-st.set_page_config(page_title="Orderfaz - Late Pickup & SLA Calculation", page_icon=icon_image, layout="centered")
+st.set_page_config(page_title="Orderfaz - Late Pickup & SLA Calculation", page_icon=icon_image, layout="wide")
 
 # Streamlit UI
 st.title("Orderfaz - Late Pickup & Over SLA Calculation")
