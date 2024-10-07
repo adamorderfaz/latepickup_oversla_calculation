@@ -11,14 +11,12 @@ required_columns = [
     'min SLA', 'max SLA', 'Delivered at'
 ]
 
-
 # Function to validate if all required columns are present
 def validate_columns(df):
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         return False, missing_columns
     return True, None
-
 
 # Function to determine if the pickup was late or not, and how many days late
 def determine_late_pickup(row):
@@ -51,7 +49,6 @@ def determine_late_pickup(row):
 
     return 'Non-Late Pickup', 0
 
-
 # Function to process the uploaded file
 def process_data(df):
     # Validate columns
@@ -63,28 +60,34 @@ def process_data(df):
     # Select all columns (no subset), as requested by user
     selected_data = df.copy()
 
+    # Define a helper function for flexible date parsing
+    def parse_dates(date_str):
+        formats = ['%d/%m/%Y %H:%M:%S', '%d-%m-%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%d-%m-%Y %H:%M', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M']
+        for fmt in formats:
+            try:
+                return pd.to_datetime(date_str, format=fmt, dayfirst=True)
+            except (ValueError, TypeError):
+                continue
+        return pd.NaT  # Return NaT if no format matches
+
     # Try to convert the columns to datetime and handle errors
     try:
-        selected_data['Created at'] = pd.to_datetime(selected_data['Created at'], format='%d %b %y %H:%M',
-                                                     errors='coerce')
-        selected_data['Dispatch at'] = pd.to_datetime(selected_data['Dispatch at'], format='%d %b %y %H:%M',
-                                                      errors='coerce')
-        selected_data['Pickup Date'] = pd.to_datetime(selected_data['Pickup Date'], format='%d %b %y %H:%M',
-                                                      errors='coerce')
-        selected_data['Delivered at'] = pd.to_datetime(selected_data['Delivered at'], format='%d %b %y',
-                                                       errors='coerce')
+        # Parse dates using the helper function for flexible date formats
+        selected_data['Created at'] = selected_data['Created at'].apply(parse_dates)
+        selected_data['Dispatch at'] = selected_data['Dispatch at'].apply(parse_dates)
+        selected_data['Pickup Date'] = selected_data['Pickup Date'].apply(parse_dates)
+        # Ensure 'Delivered at' is treated as datetime, including null values
+        selected_data['Delivered at'] = selected_data['Delivered at'].apply(parse_dates)
     except Exception as e:
         st.error(f"Error in datetime conversion: {str(e)}")
         return None
 
     # Report missing or invalid datetime values, but do not remove them
     if selected_data[['Created at', 'Dispatch at', 'Pickup Date', 'Delivered at']].isnull().any().any():
-        st.warning(
-            "Beberapa baris data pada kolom Dispatch at / Delivered at kosong, jadi perhitungan diabaikan dan diberikan penanda 'Dispatch at Kosong' atau 'Delivered at Kosong'")
+        st.warning("Some rows in Dispatch at / Delivered at are empty, so they are marked as 'Dispatch at Kosong' or 'Delivered at Kosong'.")
 
     # Apply the function to determine late or non-late pickup and 'Days Late'
-    selected_data[['Late Pickup', 'Days Late']] = selected_data.apply(lambda row: determine_late_pickup(row), axis=1,
-                                                                      result_type='expand')
+    selected_data[['Late Pickup', 'Days Late']] = selected_data.apply(lambda row: determine_late_pickup(row), axis=1, result_type='expand')
 
     # Calculate 'Tanggal Max' as 'Dispatch at' + 'max SLA' (in days), or mark 'Dispatch at Kosong'
     selected_data['Tanggal Max'] = selected_data.apply(
@@ -96,8 +99,7 @@ def process_data(df):
     # Calculate 'Over SLA' as the difference between 'Tanggal Max' and 'Delivered at', or mark 'Dispatch at Kosong' or 'Delivered at Kosong'
     selected_data['Over SLA'] = selected_data.apply(
         lambda row: (row['Tanggal Max'] - row['Delivered at']).days
-        if pd.notnull(row['Tanggal Max']) and pd.notnull(row['Delivered at']) and row[
-            'Tanggal Max'] != 'Dispatch at Kosong'
+        if pd.notnull(row['Tanggal Max']) and pd.notnull(row['Delivered at']) and row['Tanggal Max'] != 'Dispatch at Kosong'
         else 'Delivered at Kosong' if pd.isnull(row['Delivered at']) else 'Dispatch at Kosong', axis=1
     )
 
@@ -134,7 +136,6 @@ def process_data(df):
 
     return selected_data
 
-
 # Function to convert dataframe to Excel and treat specific columns as text (to avoid scientific notation)
 def to_excel(df):
     output = BytesIO()
@@ -156,7 +157,6 @@ def to_excel(df):
     processed_data = output.getvalue()
     return processed_data
 
-
 # Load images as icon
 icon_image = Image.open("orderfaz.jpeg")
 
@@ -169,13 +169,17 @@ st.title("Orderfaz - Late Pickup & Over SLA Calculation")
 # Note
 st.success('CATATAN : Pastikan untuk input data sesuai dengan format yang sesuai, jangan ada perubahan')
 
-# File uploader
-uploaded_file = st.file_uploader("Upload your Excel file", type="xlsx")
+# File uploader, now supports both CSV and XLSX
+uploaded_file = st.file_uploader("Upload your file (XLSX or CSV)", type=["xlsx", "csv"])
 
 if uploaded_file:
-    # Read the uploaded Excel file
     try:
-        df = pd.read_excel(uploaded_file)
+        # Check the file type and read accordingly
+        if uploaded_file.name.endswith('.xlsx'):
+            df = pd.read_excel(uploaded_file)
+        elif uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+
     except Exception as e:
         st.error(f"Failed to read the uploaded file: {str(e)}")
         df = None
@@ -183,6 +187,7 @@ if uploaded_file:
     if df is not None:
         # Process the data
         processed_df = process_data(df)
+        processed_df = processed_df.drop(columns='Unnamed: 0')
 
         if processed_df is not None:
             # Display the processed dataframe
@@ -198,4 +203,4 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 else:
-    st.write("Please upload an Excel file to process.")
+    st.write("Please upload an Excel or CSV file to process.")
