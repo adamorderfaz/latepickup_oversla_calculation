@@ -195,7 +195,7 @@ if uploaded_file:
     if df is not None:
         # Process the data
         processed_df = process_data(df)
-        processed_df = processed_df.drop(columns = 'Unnamed: 0')
+        # processed_df = processed_df.drop(columns = 'Unnamed: 0')
 
         if processed_df is not None:
             # Display the processed dataframe
