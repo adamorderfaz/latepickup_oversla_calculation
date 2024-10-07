@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from datetime import timedelta
+from datetime import datetime, timedelta
 from PIL import Image
 
 # List of required columns in the desired order
@@ -11,12 +11,14 @@ required_columns = [
     'min SLA', 'max SLA', 'Delivered at'
 ]
 
+
 # Function to validate if all required columns are present
 def validate_columns(df):
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         return False, missing_columns
     return True, None
+
 
 # Function to determine if the pickup was late or not, and how many days late
 def determine_late_pickup(row):
@@ -49,6 +51,7 @@ def determine_late_pickup(row):
 
     return 'Non-Late Pickup', 0
 
+
 # Function to process the uploaded file
 def process_data(df):
     # Validate columns
@@ -62,7 +65,8 @@ def process_data(df):
 
     # Define a helper function for flexible date parsing
     def parse_dates(date_str):
-        formats = ['%d/%m/%Y %H:%M:%S', '%d-%m-%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%d-%m-%Y %H:%M', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M']
+        formats = ['%d/%m/%Y %H:%M:%S', '%d-%m-%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%d-%m-%Y %H:%M', '%Y-%m-%d %H:%M:%S',
+                   '%Y-%m-%d %H:%M']
         for fmt in formats:
             try:
                 return pd.to_datetime(date_str, format=fmt, dayfirst=True)
@@ -84,41 +88,43 @@ def process_data(df):
 
     # Report missing or invalid datetime values, but do not remove them
     if selected_data[['Created at', 'Dispatch at', 'Pickup Date', 'Delivered at']].isnull().any().any():
-        st.warning("Some rows in Dispatch at / Delivered at are empty, so they are marked as 'Dispatch at Kosong' or 'Delivered at Kosong'.")
+        st.warning(
+            "Some rows in Dispatch at / Delivered at are empty, so they are marked as 'Dispatch at Kosong' or 'Delivered at Kosong'.")
 
     # Apply the function to determine late or non-late pickup and 'Days Late'
-    selected_data[['Late Pickup', 'Days Late']] = selected_data.apply(lambda row: determine_late_pickup(row), axis=1, result_type='expand')
+    selected_data[['Late Pickup', 'Days Late']] = selected_data.apply(lambda row: determine_late_pickup(row), axis=1,
+                                                                      result_type='expand')
 
     # Calculate 'Tanggal Max' as 'Dispatch at' + 'max SLA' (in days), or mark 'Dispatch at Kosong'
     selected_data['Tanggal Max'] = selected_data.apply(
         lambda row: row['Dispatch at'] + pd.to_timedelta(row['max SLA'], unit='days')
         if pd.notnull(row['Dispatch at'])
-        else 'Dispatch at Kosong', axis=1
+        else pd.NaT, axis=1  # Use NaT instead of 'Dispatch at Kosong'
     )
 
     # Calculate 'Over SLA' as the difference between 'Tanggal Max' and 'Delivered at', or mark 'Dispatch at Kosong' or 'Delivered at Kosong'
     selected_data['Over SLA'] = selected_data.apply(
         lambda row: (row['Tanggal Max'] - row['Delivered at']).days
-        if pd.notnull(row['Tanggal Max']) and pd.notnull(row['Delivered at']) and row['Tanggal Max'] != 'Dispatch at Kosong'
+        if pd.notnull(row['Tanggal Max']) and pd.notnull(row['Delivered at'])
         else 'Delivered at Kosong' if pd.isnull(row['Delivered at']) else 'Dispatch at Kosong', axis=1
     )
 
-    # Get the current date as 'Today'
-    today_date = pd.to_datetime('today').normalize()
-    selected_data['Today'] = today_date
+    # Get the current date as 'Today' and format it as 'DD-MM-YYYY'
+    today_date = datetime.today().strftime('%d-%m-%Y')
 
-    # Calculate 'Over SLA IP' only for statuses that are not 'Delivered', 'Returned', or 'Waiting for Pickup'
-    conditions = ~selected_data['Tracking Status'].isin(['Delivered', 'Returned', 'Waiting for Pickup'])
+    # Set Today to match the desired format and calculate Over SLA IP
+    selected_data['Today'] = pd.to_datetime(today_date, format='%d-%m-%Y')
 
-    # Calculate 'Over SLA IP' or mark 'Dispatch at Kosong' or 'Delivered at Kosong'
+    # Calculate 'Over SLA IP' strictly based on the date (not time)
     selected_data['Over SLA IP'] = selected_data.apply(
-        lambda row: (row['Today'] - row['Tanggal Max']).days
-        if pd.notnull(row['Tanggal Max']) and row['Tanggal Max'] != 'Dispatch at Kosong' and conditions[row.name]
-        else 'Delivered at Kosong' if pd.isnull(row['Delivered at']) else 'Dispatch at Kosong', axis=1
+        lambda row: (selected_data['Today'].iloc[0] - row['Tanggal Max'].normalize()).days
+        if pd.notnull(row['Tanggal Max']) and row['Tanggal Max'] != pd.NaT
+        else 'Dispatch at Kosong', axis=1
     )
 
-    # Format the datetime columns to the desired format 'DD-MM-YYYY hh:mm:ss'
-    datetime_columns = ['Created at', 'Dispatch at', 'Pickup Date', 'Delivered at', 'Tanggal Max', 'Today']
+    # Format the datetime columns to the desired format 'DD-MM-YYYY'
+    selected_data['Today'] = selected_data['Today'].dt.strftime('%d-%m-%Y')
+    datetime_columns = ['Created at', 'Dispatch at', 'Pickup Date', 'Delivered at', 'Tanggal Max']
     for col in datetime_columns:
         selected_data[col] = pd.to_datetime(selected_data[col], errors='coerce').dt.strftime('%d-%m-%Y %H:%M:%S')
 
@@ -135,6 +141,7 @@ def process_data(df):
     selected_data = selected_data[cols_in_order]
 
     return selected_data
+
 
 # Function to convert dataframe to Excel and treat specific columns as text (to avoid scientific notation)
 def to_excel(df):
@@ -156,6 +163,7 @@ def to_excel(df):
     writer.close()
     processed_data = output.getvalue()
     return processed_data
+
 
 # Load images as icon
 icon_image = Image.open("orderfaz.jpeg")
@@ -187,7 +195,7 @@ if uploaded_file:
     if df is not None:
         # Process the data
         processed_df = process_data(df)
-        processed_df = processed_df.drop(columns='Unnamed: 0')
+        processed_df = processed_df.drop(columns = 'Unnamed: 0')
 
         if processed_df is not None:
             # Display the processed dataframe
